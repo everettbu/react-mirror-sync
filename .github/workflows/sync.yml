@@ -1,0 +1,53 @@
+name: Sync React Mirror
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    # Allow manual trigger
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sync repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Clone react-mirror
+        run: |
+          git clone https://x-access-token:${{ secrets.MIRROR_PAT }}@github.com/greptileai/react-mirror.git mirror
+          cd mirror
+          git remote add upstream https://github.com/facebook/react.git
+          git fetch upstream --tags --prune
+
+      - name: Configure Git
+        working-directory: mirror
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Sync main branch
+        working-directory: mirror
+        run: |
+          git checkout main
+          git reset --hard upstream/main
+          git push origin main --force
+
+      - name: Sync tags
+        working-directory: mirror
+        run: |
+          git push origin --tags --force
+
+      - name: Sync PRs
+        working-directory: mirror
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_PAT }}
+        run: |
+          python ${{ github.workspace }}/scripts/sync_mirror.py
