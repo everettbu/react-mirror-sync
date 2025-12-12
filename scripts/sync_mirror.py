@@ -151,7 +151,7 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
 
     # Create PR
     pr_body = f"""**Mirror of [{UPSTREAM_REPO}#{pr_num}](https://github.com/{UPSTREAM_REPO}/pull/{pr_num})**
-**Original author:** @{author}
+**Original author:** {author}
 
 ---
 
