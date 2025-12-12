@@ -5,14 +5,16 @@ Sync script for mirroring facebook/react PRs to greptileai/react-mirror.
 This script:
 1. Creates mirror PRs for new upstream PRs
 2. Updates mirror branches when upstream PRs are updated
-3. Closes mirror PRs when upstream PRs are closed/merged
+3. Merges mirror PRs when upstream PRs are merged
+4. Closes mirror PRs when upstream PRs are closed (not merged)
 """
 
 import json
+import re
 import subprocess
 import sys
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 UPSTREAM_REPO = "facebook/react"
 FORK_REPO = "greptileai/react-mirror"
@@ -63,10 +65,27 @@ def get_fork_prs() -> Dict[str, Dict]:
         "--repo", FORK_REPO,
         "--state", "open",
         "--limit", "1000",
-        "--json", "number,title,headRefName,headRefOid"
+        "--json", "number,title,headRefName,headRefOid,body"
     ])
     prs = json.loads(result) if result else []
     return {pr["headRefName"]: pr for pr in prs}
+
+
+def extract_upstream_pr_num(pr: Dict) -> Optional[int]:
+    """Extract the upstream PR number from the mirror PR body."""
+    body = pr.get("body", "")
+    match = re.search(r"facebook/react#(\d+)", body)
+    return int(match.group(1)) if match else None
+
+
+def get_upstream_pr_state(pr_num: int) -> Optional[Dict]:
+    """Get the state of an upstream PR (open, closed, merged)."""
+    result = run_gh([
+        "pr", "view", str(pr_num),
+        "--repo", UPSTREAM_REPO,
+        "--json", "state,merged"
+    ], check=False)
+    return json.loads(result) if result else None
 
 
 def get_branch_name(pr: Dict, all_prs: List[Dict]) -> str:
@@ -173,22 +192,45 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
         return "failed"
 
 
-def close_stale_prs(upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> int:
-    """Close PRs on fork that no longer exist on upstream."""
-    print("\n=== Closing stale PRs ===")
+def close_or_merge_stale_prs(upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> Tuple[int, int]:
+    """Close or merge PRs on fork based on upstream PR state."""
+    print("\n=== Processing stale PRs ===")
     closed = 0
+    merged = 0
 
     for branch_name, pr in fork_prs.items():
         if branch_name not in upstream_branches:
             pr_num = pr["number"]
-            print(f"  Closing stale PR #{pr_num}: {branch_name}")
+            upstream_pr_num = extract_upstream_pr_num(pr)
+
+            if upstream_pr_num:
+                # Check if upstream PR was merged
+                upstream_state = get_upstream_pr_state(upstream_pr_num)
+                if upstream_state and upstream_state.get("merged"):
+                    print(f"  Merging PR #{pr_num} (upstream #{upstream_pr_num} was merged)")
+                    try:
+                        run_gh([
+                            "pr", "merge", str(pr_num),
+                            "--repo", FORK_REPO,
+                            "--merge",
+                            "--delete-branch"
+                        ], check=False)
+                        merged += 1
+                        continue
+                    except:
+                        print(f"  Failed to merge PR #{pr_num}, will close instead")
+
+            # Close if not merged or merge failed
+            print(f"  Closing PR #{pr_num}: {branch_name}")
             try:
-                run_gh(["pr", "close", str(pr_num), "--repo", FORK_REPO], check=False)
+                run_gh(["pr", "close", str(pr_num), "--repo", FORK_REPO, "--delete-branch"], check=False)
                 closed += 1
             except:
                 print(f"  Failed to close PR #{pr_num}")
 
-    return closed
+            time.sleep(0.3)  # Rate limiting
+
+    return closed, merged
 
 
 def sync_prs():
@@ -233,13 +275,14 @@ def sync_prs():
         # Small delay to avoid rate limiting
         time.sleep(0.3)
 
-    # Close stale PRs
-    closed = close_stale_prs(upstream_branches, fork_prs)
+    # Close or merge stale PRs
+    closed, merged = close_or_merge_stale_prs(upstream_branches, fork_prs)
 
     print(f"\n=== PR Sync Summary ===")
     print(f"Created: {created}")
     print(f"Updated: {updated}")
     print(f"Unchanged: {unchanged}")
+    print(f"Merged: {merged}")
     print(f"Closed: {closed}")
     print(f"Failed: {failed}")
 

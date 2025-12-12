@@ -33,12 +33,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Sync main branch
+      - name: Sync all branches
         working-directory: mirror
         run: |
+          # Sync all branches from upstream
+          git fetch upstream '+refs/heads/*:refs/remotes/upstream/*' --prune
+
+          # Push each upstream branch to origin
+          for branch in $(git branch -r | grep 'upstream/' | grep -v HEAD | sed 's|upstream/||'); do
+            echo "Syncing branch: $branch"
+            git checkout -B "$branch" "upstream/$branch"
+            git push origin "$branch" --force
+          done
+
+          # Return to main
           git checkout main
-          git reset --hard upstream/main
-          git push origin main --force
 
       - name: Sync tags
         working-directory: mirror
