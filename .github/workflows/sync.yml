@@ -54,6 +54,25 @@ jobs:
         run: |
           git push origin --tags --force
 
+      - name: Sync labels
+        env:
+          GH_TOKEN: ${{ secrets.MIRROR_PAT }}
+        run: |
+          echo "Syncing labels from upstream..."
+          gh label list --repo facebook/react --json name,color,description --limit 200 | \
+            jq -c '.[]' | while read label; do
+              name=$(echo "$label" | jq -r '.name')
+              color=$(echo "$label" | jq -r '.color')
+              desc=$(echo "$label" | jq -r '.description // empty')
+
+              if [ -n "$desc" ]; then
+                gh label create "$name" --repo greptileai/react-mirror --color "$color" --description "$desc" --force 2>/dev/null || true
+              else
+                gh label create "$name" --repo greptileai/react-mirror --color "$color" --force 2>/dev/null || true
+              fi
+            done
+          echo "Labels synced."
+
       - name: Sync PRs
         working-directory: mirror
         env:
