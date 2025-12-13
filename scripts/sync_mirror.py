@@ -114,15 +114,25 @@ def get_label_names(pr: Dict) -> List[str]:
     labels = pr.get("labels", [])
     return [label["name"] for label in labels]
 
-# Do not tag author with @
+import re
+
+def escape_mentions(text: str) -> str:
+    """Escape @mentions to prevent notifications."""
+    # Replace @username with `@username` (code formatting prevents ping)
+    return re.sub(r'@(\w+)', r'`@\1`', text)
+
+
 def build_pr_body(pr_num: int, author: str, body: str) -> str:
     """Build the mirror PR body with upstream reference."""
+    # Escape @mentions in body to prevent pinging users
+    escaped_body = escape_mentions(body)
+
     return f"""**Mirror of [{UPSTREAM_REPO}#{pr_num}](https://github.com/{UPSTREAM_REPO}/pull/{pr_num})**
-**Original author:** {author} 
+**Original author:** {author}
 
 ---
 
-{body}"""
+{escaped_body}"""
 
 
 def mark_pr_ready(fork_pr_num: int) -> bool:
