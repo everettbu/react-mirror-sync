@@ -14,6 +14,7 @@ since the code is already in the mirror via branch sync.
 """
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -114,7 +115,6 @@ def get_label_names(pr: Dict) -> List[str]:
     labels = pr.get("labels", [])
     return [label["name"] for label in labels]
 
-import re
 
 def escape_mentions(text: str) -> str:
     """Escape @mentions to prevent notifications."""
