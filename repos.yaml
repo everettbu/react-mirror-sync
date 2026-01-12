@@ -1,0 +1,19 @@
+# Mirror Sync Configuration
+# Each entry defines an upstream repo to mirror to a greptileai repository.
+#
+# Fields:
+#   name: Short identifier for the repo (used in logs)
+#   upstream: Source repository (org/repo)
+#   mirror: Destination repository (org/repo)
+#   excluded_prs: List of PR numbers to skip (e.g., branch collisions)
+
+repos:
+  - name: react
+    upstream: facebook/react
+    mirror: greptileai/react-mirror
+    excluded_prs: [32222]  # Branch name collision with repo branch
+
+  - name: n8n
+    upstream: n8n-io/n8n
+    mirror: greptileai/n8n-mirror
+    excluded_prs: []

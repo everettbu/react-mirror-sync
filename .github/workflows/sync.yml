@@ -1,4 +1,4 @@
-name: Sync React Mirror
+name: Sync Mirror Repos
 
 on:
   schedule:
@@ -8,8 +8,36 @@ on:
     # Allow manual trigger
 
 jobs:
-  sync:
+  load-repos:
     runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.parse.outputs.repos }}
+    steps:
+      - name: Checkout sync repo
+        uses: actions/checkout@v4
+
+      - name: Parse repos.yaml
+        id: parse
+        run: |
+          # Convert YAML to JSON for matrix
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+          # Convert repos array to JSON
+          repos=$(yq -o=json '.repos' repos.yaml)
+          echo "repos=$repos" >> $GITHUB_OUTPUT
+          echo "Found repos:"
+          echo "$repos" | jq -r '.[].name'
+
+  sync:
+    needs: load-repos
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo: ${{ fromJson(needs.load-repos.outputs.repos) }}
+      fail-fast: false  # Continue other syncs if one fails
+      max-parallel: 5   # Limit concurrent jobs to avoid rate limiting
 
     steps:
       - name: Checkout sync repo
@@ -20,11 +48,22 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Clone react-mirror
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Clone mirror repo
         run: |
-          git clone https://x-access-token:${{ secrets.MIRROR_PAT }}@github.com/greptileai/react-mirror.git mirror
+          echo "Syncing: ${{ matrix.repo.upstream }} -> ${{ matrix.repo.mirror }}"
+
+          # Extract org and repo name from mirror path
+          MIRROR_REPO="${{ matrix.repo.mirror }}"
+
+          git clone "https://x-access-token:${{ secrets.MIRROR_PAT }}@github.com/${MIRROR_REPO}.git" mirror
           cd mirror
-          git remote add upstream https://github.com/facebook/react.git
+
+          # Add upstream remote
+          UPSTREAM_REPO="${{ matrix.repo.upstream }}"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           git fetch upstream --tags --prune
 
       - name: Configure Git
@@ -46,8 +85,8 @@ jobs:
             git push origin "$branch" --force
           done
 
-          # Return to main
-          git checkout main
+          # Return to main (or master if main doesn't exist)
+          git checkout main 2>/dev/null || git checkout master
 
       - name: Sync tags
         working-directory: mirror
@@ -58,17 +97,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.MIRROR_PAT }}
         run: |
-          echo "Syncing labels from upstream..."
-          gh label list --repo facebook/react --json name,color,description --limit 200 | \
+          UPSTREAM_REPO="${{ matrix.repo.upstream }}"
+          MIRROR_REPO="${{ matrix.repo.mirror }}"
+
+          echo "Syncing labels from ${UPSTREAM_REPO} to ${MIRROR_REPO}..."
+          gh label list --repo "$UPSTREAM_REPO" --json name,color,description --limit 200 | \
             jq -c '.[]' | while read label; do
               name=$(echo "$label" | jq -r '.name')
               color=$(echo "$label" | jq -r '.color')
               desc=$(echo "$label" | jq -r '.description // empty')
 
               if [ -n "$desc" ]; then
-                gh label create "$name" --repo greptileai/react-mirror --color "$color" --description "$desc" --force 2>/dev/null || true
+                gh label create "$name" --repo "$MIRROR_REPO" --color "$color" --description "$desc" --force 2>/dev/null || true
               else
-                gh label create "$name" --repo greptileai/react-mirror --color "$color" --force 2>/dev/null || true
+                gh label create "$name" --repo "$MIRROR_REPO" --color "$color" --force 2>/dev/null || true
               fi
             done
           echo "Labels synced."
@@ -78,4 +120,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.MIRROR_PAT }}
         run: |
-          python ${{ github.workspace }}/scripts/sync_mirror.py
+          UPSTREAM_REPO="${{ matrix.repo.upstream }}"
+          MIRROR_REPO="${{ matrix.repo.mirror }}"
+          EXCLUDED_PRS="${{ join(matrix.repo.excluded_prs, ',') }}"
+
+          python ${{ github.workspace }}/scripts/sync_mirror.py \
+            --upstream "$UPSTREAM_REPO" \
+            --mirror "$MIRROR_REPO" \
+            --excluded-prs "$EXCLUDED_PRS"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sync script for mirroring facebook/react PRs to greptileai/react-mirror.
+Sync script for mirroring PRs from an upstream repo to a mirror repo.
 
 This script:
 1. Creates mirror PRs for new upstream PRs (with labels, draft status)
@@ -13,18 +13,22 @@ When upstream PRs close/merge, mirror PRs are simply closed (not merged)
 since the code is already in the mirror via branch sync.
 """
 
+import argparse
 import json
 import re
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-UPSTREAM_REPO = "facebook/react"
-FORK_REPO = "greptileai/react-mirror"
 
-# PRs to skip (e.g., branch name collisions with repo branches)
-EXCLUDED_PRS = {32222}
+@dataclass
+class RepoConfig:
+    """Configuration for a repo sync pair."""
+    upstream: str  # e.g., "facebook/react"
+    mirror: str    # e.g., "greptileai/react-mirror"
+    excluded_prs: Set[int] = field(default_factory=set)
 
 
 def run_cmd(cmd: List[str], capture: bool = True, check: bool = True) -> Optional[str]:
@@ -51,12 +55,12 @@ def run_gh(args: List[str], check: bool = True) -> Optional[str]:
     return run_cmd(["gh"] + args, check=check)
 
 
-def get_upstream_prs() -> List[Dict]:
+def get_upstream_prs(config: RepoConfig) -> List[Dict]:
     """Get all open PRs from upstream repo."""
     print("Fetching open PRs from upstream...")
     result = run_gh([
         "pr", "list",
-        "--repo", UPSTREAM_REPO,
+        "--repo", config.upstream,
         "--state", "open",
         "--limit", "500",
         "--json", "number,title,baseRefName,headRefName,headRefOid,body,author,labels,isDraft"
@@ -64,12 +68,12 @@ def get_upstream_prs() -> List[Dict]:
     return json.loads(result) if result else []
 
 
-def get_fork_prs() -> Dict[str, Dict]:
+def get_fork_prs(config: RepoConfig) -> Dict[str, Dict]:
     """Get all open PRs from fork, indexed by head branch."""
     print("Fetching open PRs from fork...")
     result = run_gh([
         "pr", "list",
-        "--repo", FORK_REPO,
+        "--repo", config.mirror,
         "--state", "open",
         "--limit", "1000",
         "--json", "number,title,headRefName,headRefOid,body,labels,isDraft,id"
@@ -125,12 +129,12 @@ def escape_mentions(text: str) -> str:
     return re.sub(r'@(\w+)', r'`@\1`', text)
 
 
-def build_pr_body(pr_num: int, author: str, body: str) -> str:
+def build_pr_body(config: RepoConfig, pr_num: int, author: str, body: str) -> str:
     """Build the mirror PR body with upstream reference."""
     # Escape @mentions in body to prevent pinging users
     escaped_body = escape_mentions(body)
 
-    return f"""**Mirror of [{UPSTREAM_REPO}#{pr_num}](https://github.com/{UPSTREAM_REPO}/pull/{pr_num})**
+    return f"""**Mirror of [{config.upstream}#{pr_num}](https://github.com/{config.upstream}/pull/{pr_num})**
 **Original author:** {author}
 
 ---
@@ -138,12 +142,12 @@ def build_pr_body(pr_num: int, author: str, body: str) -> str:
 {escaped_body}"""
 
 
-def mark_pr_ready(fork_pr_num: int) -> bool:
+def mark_pr_ready(config: RepoConfig, fork_pr_num: int) -> bool:
     """Mark a draft PR as ready for review."""
     try:
         run_gh([
             "pr", "ready", str(fork_pr_num),
-            "--repo", FORK_REPO
+            "--repo", config.mirror
         ])
         return True
     except:
@@ -162,7 +166,7 @@ def convert_pr_to_draft(pr_node_id: str) -> bool:
         return False
 
 
-def sync_labels(fork_pr_num: int, upstream_labels: List[str], fork_labels: List[str]) -> None:
+def sync_labels(config: RepoConfig, fork_pr_num: int, upstream_labels: List[str], fork_labels: List[str]) -> None:
     """Sync labels between upstream and fork PRs."""
     upstream_set = set(upstream_labels)
     fork_set = set(fork_labels)
@@ -172,7 +176,7 @@ def sync_labels(fork_pr_num: int, upstream_labels: List[str], fork_labels: List[
     if to_add:
         run_gh([
             "pr", "edit", str(fork_pr_num),
-            "--repo", FORK_REPO,
+            "--repo", config.mirror,
             "--add-label", ",".join(to_add)
         ], check=False)  # Don't fail if labels don't exist on fork
 
@@ -181,24 +185,24 @@ def sync_labels(fork_pr_num: int, upstream_labels: List[str], fork_labels: List[
     if to_remove:
         run_gh([
             "pr", "edit", str(fork_pr_num),
-            "--repo", FORK_REPO,
+            "--repo", config.mirror,
             "--remove-label", ",".join(to_remove)
         ], check=False)
 
 
-def update_pr_metadata(fork_pr_num: int, title: str, body: str, upstream_labels: List[str], fork_labels: List[str], is_draft: bool, fork_is_draft: bool, pr_node_id: str) -> bool:
+def update_pr_metadata(config: RepoConfig, fork_pr_num: int, title: str, body: str, upstream_labels: List[str], fork_labels: List[str], is_draft: bool, fork_is_draft: bool, pr_node_id: str) -> bool:
     """Update PR title, body, labels, and draft status."""
     try:
         # Update title and body
         run_gh([
             "pr", "edit", str(fork_pr_num),
-            "--repo", FORK_REPO,
+            "--repo", config.mirror,
             "--title", title,
             "--body", body
         ])
 
         # Sync labels (add new, remove old)
-        sync_labels(fork_pr_num, upstream_labels, fork_labels)
+        sync_labels(config, fork_pr_num, upstream_labels, fork_labels)
 
         # Update draft status if changed
         if is_draft and not fork_is_draft:
@@ -208,7 +212,7 @@ def update_pr_metadata(fork_pr_num: int, title: str, body: str, upstream_labels:
         elif not is_draft and fork_is_draft:
             # Mark as ready
             print(f"    Marking PR #{fork_pr_num} as ready")
-            mark_pr_ready(fork_pr_num)
+            mark_pr_ready(config, fork_pr_num)
 
         return True
     except Exception as e:
@@ -216,7 +220,7 @@ def update_pr_metadata(fork_pr_num: int, title: str, body: str, upstream_labels:
         return False
 
 
-def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -> str:
+def create_or_update_pr(config: RepoConfig, pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -> str:
     """
     Create a new PR or update existing one.
     Returns: 'created', 'updated', 'unchanged', or 'failed'
@@ -231,7 +235,7 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
     is_draft = pr.get("isDraft", False)
 
     # Build the expected mirror PR body
-    expected_body = build_pr_body(pr_num, author, body)
+    expected_body = build_pr_body(config, pr_num, author, body)
 
     # Check if PR already exists on fork
     existing = fork_prs.get(branch_name)
@@ -267,7 +271,7 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
 
         if metadata_changed:
             print(f"  [{pr_num}] Updating metadata: {branch_name}")
-            update_pr_metadata(fork_pr_num, title, expected_body, upstream_labels, fork_labels, is_draft, fork_is_draft, fork_node_id)
+            update_pr_metadata(config, fork_pr_num, title, expected_body, upstream_labels, fork_labels, is_draft, fork_is_draft, fork_node_id)
 
         if branch_updated or metadata_changed:
             return "updated"
@@ -292,7 +296,7 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
     try:
         create_args = [
             "pr", "create",
-            "--repo", FORK_REPO,
+            "--repo", config.mirror,
             "--head", branch_name,
             "--base", base,
             "--title", title,
@@ -315,7 +319,7 @@ def create_or_update_pr(pr: Dict, branch_name: str, fork_prs: Dict[str, Dict]) -
         return "failed"
 
 
-def close_stale_prs(upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> int:
+def close_stale_prs(config: RepoConfig, upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> int:
     """
     Close PRs on fork that no longer exist on upstream.
 
@@ -334,7 +338,7 @@ def close_stale_prs(upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> i
             try:
                 run_gh([
                     "pr", "close", str(pr_num),
-                    "--repo", FORK_REPO,
+                    "--repo", config.mirror,
                     "--delete-branch",
                     "--comment", "Upstream PR was closed or merged. Code is synced via branch mirror."
                 ], check=False)
@@ -347,13 +351,13 @@ def close_stale_prs(upstream_branches: Set[str], fork_prs: Dict[str, Dict]) -> i
     return closed
 
 
-def sync_prs():
+def sync_prs(config: RepoConfig):
     """Sync all PRs from upstream to fork."""
     print("\n=== Syncing PRs ===")
 
     # Get current state
-    upstream_prs = get_upstream_prs()
-    fork_prs = get_fork_prs()
+    upstream_prs = get_upstream_prs(config)
+    fork_prs = get_fork_prs(config)
 
     print(f"Found {len(upstream_prs)} open PRs on upstream")
     print(f"Found {len(fork_prs)} open PRs on fork")
@@ -375,14 +379,14 @@ def sync_prs():
         pr_num = pr["number"]
 
         # Skip excluded PRs (e.g., branch name collisions)
-        if pr_num in EXCLUDED_PRS:
+        if pr_num in config.excluded_prs:
             print(f"  [{pr_num}] Skipping (excluded)")
             continue
 
         branch_name = get_branch_name(pr, upstream_prs)
         upstream_branches.add(branch_name)
 
-        result = create_or_update_pr(pr, branch_name, fork_prs)
+        result = create_or_update_pr(config, pr, branch_name, fork_prs)
 
         if result == "created":
             created += 1
@@ -397,7 +401,7 @@ def sync_prs():
         time.sleep(0.3)
 
     # Close stale PRs (code is already synced via branches)
-    closed = close_stale_prs(upstream_branches, fork_prs)
+    closed = close_stale_prs(config, upstream_branches, fork_prs)
 
     print(f"\n=== PR Sync Summary ===")
     print(f"Created: {created}")
@@ -409,12 +413,50 @@ def sync_prs():
     return failed == 0
 
 
+def parse_args() -> RepoConfig:
+    """Parse command line arguments and return config."""
+    parser = argparse.ArgumentParser(
+        description="Sync PRs from upstream repo to mirror repo"
+    )
+    parser.add_argument(
+        "--upstream",
+        required=True,
+        help="Upstream repository (e.g., facebook/react)"
+    )
+    parser.add_argument(
+        "--mirror",
+        required=True,
+        help="Mirror repository (e.g., greptileai/react-mirror)"
+    )
+    parser.add_argument(
+        "--excluded-prs",
+        type=str,
+        default="",
+        help="Comma-separated list of PR numbers to skip (e.g., 123,456)"
+    )
+
+    args = parser.parse_args()
+
+    # Parse excluded PRs
+    excluded = set()
+    if args.excluded_prs:
+        excluded = {int(pr.strip()) for pr in args.excluded_prs.split(",") if pr.strip()}
+
+    return RepoConfig(
+        upstream=args.upstream,
+        mirror=args.mirror,
+        excluded_prs=excluded
+    )
+
+
 def main():
+    config = parse_args()
+
     print("=" * 60)
-    print("React Mirror PR Sync")
+    print(f"Mirror PR Sync: {config.upstream} -> {config.mirror}")
     print("=" * 60)
 
-    success = sync_prs()
+    success = sync_prs(config)
 
     print("\n" + "=" * 60)
     print("Sync complete!" if success else "Sync completed with errors")
