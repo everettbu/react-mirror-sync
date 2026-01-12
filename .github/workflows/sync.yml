@@ -95,9 +95,8 @@ jobs:
 
       - name: Sync all branches
         working-directory: mirror
+        shell: bash {0}
         run: |
-          set +e  # Don't exit on error
-
           # Sync all branches from upstream
           git fetch upstream '+refs/heads/*:refs/remotes/upstream/*' --prune
 
@@ -131,8 +130,6 @@ jobs:
 
           # Return to main (or master if main doesn't exist)
           git checkout main 2>/dev/null || git checkout master
-
-          exit 0  # Always succeed
 
       - name: Sync default branch
         env:
