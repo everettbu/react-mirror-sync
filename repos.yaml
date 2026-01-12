@@ -17,3 +17,59 @@ repos:
     upstream: n8n-io/n8n
     mirror: greptileai/n8n-mirror
     excluded_prs: []
+
+  - name: supabase
+    upstream: supabase/supabase
+    mirror: greptileai/supabase-mirror
+    excluded_prs: []
+
+  - name: grafana
+    upstream: grafana/grafana
+    mirror: greptileai/grafana-mirror
+    excluded_prs: []
+
+  - name: compose
+    upstream: docker/compose
+    mirror: greptileai/docker-mirror
+    excluded_prs: []
+
+  - name: vscode
+    upstream: microsoft/vscode
+    mirror: greptileai/vscode-mirror
+    excluded_prs: []
+
+  - name: posthog
+    upstream: PostHog/posthog
+    mirror: greptileai/posthog-mirror
+    excluded_prs: []
+
+# Commented out for later:
+# - name: superset
+#   upstream: apache/superset
+#   mirror: greptileai/superset-mirror
+#   excluded_prs: []
+#
+# - name: tailscale
+#   upstream: tailscale/tailscale
+#   mirror: greptileai/tailscale-mirror
+#   excluded_prs: []
+#
+# - name: kong
+#   upstream: Kong/kong
+#   mirror: greptileai/kong-mirror
+#   excluded_prs: []
+#
+# - name: appsmith
+#   upstream: appsmithorg/appsmith
+#   mirror: greptileai/appsmith-mirror
+#   excluded_prs: []
+#
+# - name: infisical
+#   upstream: Infisical/infisical
+#   mirror: greptileai/infisical-mirror
+#   excluded_prs: []
+#
+# - name: strapi
+#   upstream: strapi/strapi
+#   mirror: greptileai/strapi-mirror
+#   excluded_prs: []
